@@ -5,6 +5,7 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from typing import List, Optional
 import torch
+import numpy as np
 from transformers import AutoTokenizer, AutoModelForSequenceClassification
 import uvicorn
 
@@ -28,6 +29,7 @@ class OllamaRerankRequest(BaseModel):
     model: str
     query: str
     documents: List[str]
+    normalize: Optional[bool] = False  # 是否对分数进行归一化
 
 
 class OllamaRerankResult(BaseModel):
@@ -101,6 +103,51 @@ class RerankModel:
 
         return results
 
+    @staticmethod
+    def normalize_scores(results: List[dict], method: str = "min_max") -> List[dict]:
+        """
+        对 rerank 结果进行分数归一化
+
+        Args:
+            results: rerank 结果列表，每个元素包含 index, document, score
+            method: 归一化方法，"min_max" 或 "softmax"
+
+        Returns:
+            归一化后的结果列表，分数范围在 [0, 1]
+        """
+        if not results:
+            return results
+
+        scores = [r["score"] for r in results]
+        scores_array = np.array(scores)
+
+        if method == "min_max":
+            # Min-Max 归一化：将分数映射到 [0, 1]
+            min_score = scores_array.min()
+            max_score = scores_array.max()
+            if max_score == min_score:
+                # 所有分数相同，归一化为 0.5
+                normalized_scores = np.full_like(scores_array, 0.5)
+            else:
+                normalized_scores = (scores_array - min_score) / (max_score - min_score)
+        elif method == "softmax":
+            # Softmax 归一化：转换为概率分布
+            # 使用温度参数来调整分布的尖锐程度
+            temperature = 1.0
+            exp_scores = np.exp(scores_array / temperature)
+            normalized_scores = exp_scores / exp_scores.sum()
+        else:
+            raise ValueError(f"不支持的归一化方法: {method}")
+
+        # 更新结果中的分数
+        normalized_results = []
+        for i, result in enumerate(results):
+            normalized_result = result.copy()
+            normalized_result["score"] = float(normalized_scores[i])
+            normalized_results.append(normalized_result)
+
+        return normalized_results
+
 
 # 全局模型实例
 rerank_model = None
@@ -165,7 +212,8 @@ async def ollama_rerank(request: OllamaRerankRequest):
     {
         "model": "qllama/bge-reranker-v2-m3:latest",
         "query": "查询文本",
-        "documents": ["文档1", "文档2", "文档3"]
+        "documents": ["文档1", "文档2", "文档3"],
+        "normalize": true  # 可选，是否对分数进行归一化到 [0, 1]
     }
 
     响应格式：
@@ -175,6 +223,10 @@ async def ollama_rerank(request: OllamaRerankRequest):
             {"index": 1, "relevance_score": 0.87}
         ]
     }
+
+    注意：
+    - normalize 参数为 true 时，分数会被归一化到 [0, 1] 范围
+    - normalize 参数为 false 或未指定时，返回原始模型分数
     """
     if rerank_model is None:
         raise HTTPException(status_code=503, detail="模型尚未加载完成")
@@ -189,6 +241,9 @@ async def ollama_rerank(request: OllamaRerankRequest):
             documents=request.documents,
             top_k=None  # Ollama 格式返回所有结果
         )
+
+        # 如果启用归一化，对分数进行归一化
+        results = RerankModel.normalize_scores(results, method="softmax")
 
         # 转换为 Ollama 格式
         ollama_results = [

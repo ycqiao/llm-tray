@@ -10,7 +10,8 @@ def test_ollama_rerank():
     payload = {
         "model": "qllama/bge-reranker-v2-m3:latest",
         "query": "查询文本",
-        "documents": ["文档1", "文档2", "文档3"]
+        "documents": ["文档1", "文档2", "文档3"],
+        "normalize": True
     }
 
     print("请求 URL:", url)
