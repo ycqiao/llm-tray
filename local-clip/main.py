@@ -30,6 +30,12 @@ def get_image_from_url(url):
     else:
         raise Exception(f"无法获取图像，状态码：{response.status_code}")
 
+def get_image_from_fs(path):
+    """
+    从文件系统获取图像
+    """
+    return Image.open(path)
+
 def classify_image(model, processor, image, categories):
     """
     使用CLIP对图像进行零样本分类
@@ -94,7 +100,8 @@ def main():
 
     # 获取示例图像
     url = "https://raw.githubusercontent.com/pytorch/hub/master/images/dog.jpg"
-    image = get_image_from_url(url)
+    # image = get_image_from_url(url)
+    image = get_image_from_fs("dog.png")
 
     # 定义要识别的类别
     categories = ["狗", "猫", "鸟", "鱼", "马", "汽车", "自行车", "飞机"]
